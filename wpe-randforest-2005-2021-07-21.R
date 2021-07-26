@@ -249,10 +249,10 @@ pwc_prepped_small <- prep(pwc_rec_small, training = pwc_train) # preps data, app
 pwc_train_bake_small <- bake(pwc_prepped_small, new_data = pwc_train)
 
 # Create a small random forest model to tune
-rf_mod_small <- rand_forest(mtry = tune(), min_n = tune(),
+rf_mod_small <- rand_forest(mtry = 4, min_n = 2,
                             trees = 1000) %>%
   set_mode("regression") %>%
-  set_engine("ranger", importance = "impurity")
+  set_engine("ranger", importance = "impurity", num.threads = 10)
 
 # Create small workflow
 final_wf_small <- workflow() %>%
@@ -263,18 +263,18 @@ final_wf_small <- workflow() %>%
 # Match mtry with number of predictor variables (9)
 # Match min_n to sqrt (rounded up) of number of predictor variables (3)
 rf_grid_small <- grid_regular(
-  mtry(range = c(1, 9)),
+  mtry(range = c(4, 5)),
   min_n(range = c(2, 4)),
-  levels = 9)
+  levels = 5)
 
-# Tune small random forest model with targets min_n and mtry
+# small random forest model with targets min_n and mtry based on 2015
 rf_fit_small <- tune_grid(final_wf_small, 
                           resamples = folds,
                           grid = rf_grid_small,
                           metrics = metric_set(rmse, mae, rsq))
 
 # Save an RDS file for future use if needed, save that memory
-saveRDS(rf_fit_small, "./randforest_rds/first_model_RF_small.rds")
+saveRDS(rf_fit_small, "./randforest_rds/first_model_RF_small_2005.rds")
 
 # Graphs rmse for targeted mtry and min_n using small random forest model
 rf_param_plot_small <- rf_fit_small  %>%
@@ -286,7 +286,7 @@ rf_param_plot_small <- rf_fit_small  %>%
   geom_point() +
   labs(y = "rmse")
 
-ggsave('Graphs/rf_param_plot_small.png', plot = rf_param_plot_small)
+ggsave('Graphs/rf_param_plot_small_2005.png', plot = rf_param_plot_small)
 
 # Pick the best set of hyperparameters
 show_best(rf_fit_small, metric = "mae")
@@ -303,14 +303,14 @@ final_rf_small <- finalize_model(rf_mod_small, pwc_rf_small)
 # Rerun final model and output the variable importance based on the GINI index
 pwc_vip_small <- final_rf_small %>%
   set_engine("ranger", importance = "impurity") %>% # use GINI index of impurity
-  fit(pwc ~ elevation + clay + aspect + fallsum + fallmean + wintersum + wintermean + slope + washdist,
+  fit(pwc_naughtfive ~ elevation + clay + aspect + fallsum + fallmean + wintersum + wintermean + slope + washdist,
       data = pwc_train_bake_small) %>%
   vip(geom = "point", num_features = 9) # variable importance graph
 
 pwc_vip_small
 
 # Save VIP plot of the small/9 variable random forest model
-ggsave('Graphs/pwc_vip_9.png', plot = pwc_vip_small)
+ggsave('Graphs/pwc_vip_9_2005.png', plot = pwc_vip_small)
 
 # Finalize Workflow with 9 predictors
 final_wf_small <- workflow() %>%
@@ -326,20 +326,20 @@ final_res_small %>%
   collect_metrics()
 
 # Save the RDS file for further use, save that memory
-saveRDS(final_res_small, "./randforest_rds/final_model_RF_small.rds")
+saveRDS(final_res_small, "./randforest_rds/final_model_RF_small_2005.rds")
 
 # Compare predicted pwc values to test pwc
 final_res_small %>% 
-  collect_predictions(summarize = FALSE) %>% arrange(desc(pwc))
+  collect_predictions(summarize = FALSE) %>% arrange(desc(pwc_naughtfive))
 
 # graph of predicted values to testing pwc
 rf_plot_small <- final_res_small %>%
   collect_predictions() %>%
-  ggplot(aes(100*pwc, 100*.pred)) +
+  ggplot(aes(100*pwc_naughtfive, 100*.pred)) +
   geom_point(size = 0.5, alpha = 0.5) +
-  labs(y = 'Random Forest Predicted Woody Cover (%)', x = 'Landsat NDVI Predicted Woody Cover (%)') +
-  ylim(c(0, 60))+
-  xlim(c(0, 80))+
+  labs(y = '2005 Random Forest Predicted Woody Cover (%)', x = '2005 Landsat NDVI Predicted Woody Cover (%)') +
+  ylim(c(50, 100))+
+  xlim(c(50, 100))+
   scale_color_manual(values = c("gray80", "darkred"))+
   geom_abline(intercept = 0, slope = 1, color = "blue", size = 1)+
   stat_smooth(method = "lm", formula = y ~ x, color = "red")+
@@ -352,15 +352,18 @@ rf_plot_small <- final_res_small %>%
 rf_plot_small
 
 # Save comparison plot of small/9 variable random forest model
-ggsave('Graphs/RF_Model_Small.png', plot = rf_plot_small)
-
+ggsave('Graphs/RF_Model_Small_2005.png', plot = rf_plot_small)
 
 # Apply random forest model to create predictions on full raster
 
 # # Load RDS file if need to shut down R
-#rf_fit_small_last <- readRDS("./randforest_rds/final_model_RF_small.rds")
+rf_fit_small_last <- readRDS("./randforest_rds/final_model_RF_small_2005.rds")
 
 rf_fit_small_last_pred <- as.data.frame(rf_fit_small_last$.predictions)
+
+rf_fit_small_2015 <- readRDS("./randforest_rds/final_model_RF_small.rds")
+
+rf_fit_small_2015_pred <- as.data.frame(rf_fit_small_2015$.predictions)
 
 # Apply recipe preprocessing to training data
 pwc_full_prep <- prep(pwc_rec, training = pwc_samps) # preps data, applies recipe
@@ -369,12 +372,12 @@ pwc_full_prep <- prep(pwc_rec, training = pwc_samps) # preps data, applies recip
 pwc_full_baked <- bake(pwc_prepped, new_data = pwc_samps)
 
 # take final (best) random forest model, run on VIPs with baked (recipe applied) full dataset
-rf_mod_pred <- final_rf %>% 
-  fit(pwc ~ elevation + clay + aspect + fallsum + fallmean + wintersum + wintermean + slope + washdist,
+rf_mod_pred <- final_rf_small %>% 
+  fit(pwc_naughtfive ~ elevation + clay + aspect + fallsum + fallmean + wintersum + wintermean + slope + washdist,
       data = pwc_full_baked)
 
 # Save the RDS file for further use, save that memory
-saveRDS(rf_mod_pred, "./randforest_rds/pred_model_RF_small.rds")
+saveRDS(rf_mod_pred, "./randforest_rds/pred_model_RF_small_2005.rds")
 
 # look at fit
 rf_mod_pred$fit
@@ -388,16 +391,17 @@ rf_mod_pred$fit$variable.importance
 # create new table with only point, easting, northing, original pwc, and predicted pwc
 pwc_small_rf_comb <- pwc_samps %>% 
   mutate(pred = rf_mod_pred$fit$predictions) %>% 
-  dplyr::select(point, easting, northing, pwc, pred) %>% 
-  rename(predicted_pwc = pred)
+  mutate(max_pwc_2005 = (pred + 0.0267)) %>% 
+  dplyr::select(point, easting, northing, pwc_naughtfive, pred, max_pwc_2005) %>% 
+  dplyr::rename(predicted_pwc = pred)
 
 # look at good of fit between predicted and original pwc values
 pwc_small_rf_comb %>% 
-  ggplot(aes(100*pwc, 100*predicted_pwc)) +
+  ggplot(aes(100*pwc_naughtfive, 100*predicted_pwc)) +
   geom_point(size = 0.5, alpha = 0.5) +
-  labs(y = 'Random Forest Predicted Woody Cover (%)', x = 'Landsat NDVI Predicted Woody Cover (%)') +
-  ylim(c(0, 60))+
-  xlim(c(0, 80))+
+  labs(y = '2005 Random Forest Predicted Woody Cover (%)', x = '2005 Landsat NDVI Predicted Woody Cover (%)') +
+  ylim(c(50, 100))+
+  xlim(c(50, 100))+
   scale_color_manual(values = c("gray80", "darkred"))+
   geom_abline(intercept = 0, slope = 1, color = "blue", size = 1)+
   stat_smooth(method = "lm", formula = y ~ x, color = "red")+
@@ -409,7 +413,7 @@ pwc_small_rf_comb %>%
 
 
 # write the original and predicted pwc values to new .csv
-write_csv(pwc_small_rf_comb, path = "Data/rf_model_pred.csv")
+write_csv(pwc_small_rf_comb, path = "Data/rf_model_pred_2005.csv")
 
 # Stop the 5-core cluster/parallel processing
 stopCluster(cl)
